@@ -1,5 +1,8 @@
 import express from "express";
 import cors from "cors";
+import authRoutes from "./routes/auth.js";
+import patientRoutes from "./routes/patients.js";
+
 
 const app = express();
 //cors protocol defies SOP (Same origin protocol) and allows access btw different ports (frontend->localHost3000 and backend->localhost5000)
@@ -8,6 +11,10 @@ const app = express();
 // Middleware
 app.use(cors());//tells the sys to use CORS protocol 
 app.use(express.json());//converts to JavaScriptObject 
+app.use("/auth", authRoutes);
+app.use("/patients", patientRoutes);
+
+
 
 // Test route
 app.get("/", (req, res) => {
@@ -25,6 +32,10 @@ app.get("/db-test", async (req, res) => {
     res.status(500).send("Database connection failed");
   }
 });
+
+
+
+
 
 
 export default app;
