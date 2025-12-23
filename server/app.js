@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import patientRoutes from "./routes/patients.js";
+import appointmentRoutes from "./routes/appointments.js";
+import diagnosisRoutes from "./routes/diagnosis.js";
 
 
 const app = express();
@@ -13,7 +15,8 @@ app.use(cors());//tells the sys to use CORS protocol
 app.use(express.json());//converts to JavaScriptObject 
 app.use("/auth", authRoutes);
 app.use("/patients", patientRoutes);
-
+app.use("/appointments",appointmentRoutes);
+app.use("/diagnoses", diagnosisRoutes);
 
 
 // Test route
