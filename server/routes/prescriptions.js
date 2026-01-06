@@ -1,11 +1,13 @@
 import express from "express";
 import pool from "../db.js";
 import authMiddleware from "../middleware/authJWT.js";
+import PDFDocument from "pdfkit";
 
 const router = express.Router();
 
+
 router.post("/", authMiddleware, async (req, res) => {
-  const client = await pool.connect(); //to make sure atomicity exists (all queries run or none do)
+  const client = await pool.connect();
 
   try {
     const doctorId = req.doctor.doc_id;
@@ -17,7 +19,7 @@ router.post("/", authMiddleware, async (req, res) => {
 
     await client.query("BEGIN");
 
-    
+    // Verify appointment ownership
     const apptRes = await client.query(
       `SELECT patient_id, doctor_id
        FROM appointments
@@ -35,8 +37,8 @@ router.post("/", authMiddleware, async (req, res) => {
 
     const patientId = apptRes.rows[0].patient_id;
 
-  
-    let diagnosisRes = await client.query(
+    // Diagnosis (reuse or create)
+    const diagRes = await client.query(
       `SELECT diagnosis_id
        FROM diagnoses
        WHERE patient_id = $1
@@ -46,8 +48,8 @@ router.post("/", authMiddleware, async (req, res) => {
     );
 
     let diagnosisId;
-    if (diagnosisRes.rows.length > 0) {
-      diagnosisId = diagnosisRes.rows[0].diagnosis_id;
+    if (diagRes.rows.length > 0) {
+      diagnosisId = diagRes.rows[0].diagnosis_id;
     } else {
       const newDiag = await client.query(
         `INSERT INTO diagnoses (patient_id, doctor_id, diagnosis_text)
@@ -58,20 +60,20 @@ router.post("/", authMiddleware, async (req, res) => {
       diagnosisId = newDiag.rows[0].diagnosis_id;
     }
 
-    
+    // Prescription
     const prescriptionRes = await client.query(
       `INSERT INTO prescriptions
        (appointment_id, doctor_id, patient_id, diagnosis_id, instructions)
        VALUES ($1,$2,$3,$4,$5)
        RETURNING prescription_id`,
-      [appointment_id, doctorId, patientId, diagnosisId, instructions]
+      [appointment_id, doctorId, patientId, diagnosisId, instructions || null]
     );
 
     const prescriptionId = prescriptionRes.rows[0].prescription_id;
 
-    
+    // Medications
     for (const med of medications) {
-      let medRes = await client.query(
+      const medRes = await client.query(
         `SELECT medication_id
          FROM medications
          WHERE diagnosis_id = $1
@@ -84,8 +86,7 @@ router.post("/", authMiddleware, async (req, res) => {
         medicationId = medRes.rows[0].medication_id;
       } else {
         const newMed = await client.query(
-          `INSERT INTO medications
-           (diagnosis_id, medicine_name)
+          `INSERT INTO medications (diagnosis_id, medicine_name)
            VALUES ($1,$2)
            RETURNING medication_id`,
           [diagnosisId, med.medicine_name]
@@ -93,7 +94,6 @@ router.post("/", authMiddleware, async (req, res) => {
         medicationId = newMed.rows[0].medication_id;
       }
 
-      
       await client.query(
         `INSERT INTO prescription_medications
          (prescription_id, medication_id, dosage, frequency, duration)
@@ -101,9 +101,9 @@ router.post("/", authMiddleware, async (req, res) => {
         [
           prescriptionId,
           medicationId,
-          med.dosage,
-          med.frequency,
-          med.duration
+          med.dosage || null,
+          med.frequency || null,
+          med.duration || null
         ]
       );
     }
@@ -125,7 +125,7 @@ router.post("/", authMiddleware, async (req, res) => {
 });
 
 
-//fetch prescription
+
 router.get(
   "/appointment/:appointmentId",
   authMiddleware,
@@ -155,7 +155,6 @@ router.get(
 
       const prescription = prescriptionRes.rows[0];
 
-     
       const medsRes = await pool.query(
         `SELECT m.medicine_name,
                 pm.dosage,
@@ -168,7 +167,6 @@ router.get(
         [prescription.prescription_id]
       );
 
-      
       res.json({
         prescription_id: prescription.prescription_id,
         appointment_id: prescription.appointment_id,
@@ -185,9 +183,7 @@ router.get(
   }
 );
 
-import PDFDocument from "pdfkit";
-import fs from "fs";
-import path from "path";
+
 
 router.get(
   "/appointment/:appointmentId/pdf",
@@ -197,7 +193,6 @@ router.get(
       const doctorId = req.doctor.doc_id;
       const { appointmentId } = req.params;
 
-     
       const presRes = await pool.query(
         `SELECT p.prescription_id,
                 p.instructions,
@@ -220,7 +215,6 @@ router.get(
 
       const prescription = presRes.rows[0];
 
-    
       const medsRes = await pool.query(
         `SELECT m.medicine_name,
                 pm.dosage,
@@ -232,8 +226,8 @@ router.get(
         [prescription.prescription_id]
       );
 
-      
       const doc = new PDFDocument({ margin: 50 });
+
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
         "Content-Disposition",
@@ -242,7 +236,6 @@ router.get(
 
       doc.pipe(res);
 
-      
       doc
         .fontSize(18)
         .text("Medical Prescription", { align: "center" })
@@ -255,7 +248,6 @@ router.get(
         .text(`Date: ${new Date(prescription.created_at).toDateString()}`)
         .moveDown();
 
-      
       doc
         .fontSize(14)
         .text("Diagnosis:")
@@ -263,7 +255,6 @@ router.get(
         .text(prescription.diagnosis_text)
         .moveDown();
 
-      
       doc.fontSize(14).text("Medications:").moveDown(0.5);
 
       medsRes.rows.forEach((med, index) => {
@@ -276,7 +267,6 @@ router.get(
 
       doc.moveDown();
 
-      
       if (prescription.instructions) {
         doc
           .fontSize(14)
@@ -286,18 +276,18 @@ router.get(
           .moveDown();
       }
 
-     
-      doc.moveDown(2);
       doc
+        .moveDown(2)
         .fontSize(12)
         .text("Prescribed by")
         .moveDown(0.3)
-       .fontSize(13)
-       .text(`Dr. ${prescription.doctor_name}`)
-       .fontSize(11)
-       .text(`Generated on ${new Date().toDateString()}`)
-      .text("This is a digitally generated prescription");
+        .fontSize(13)
+        .text(`Dr. ${prescription.doctor_name}`)
+        .fontSize(11)
+        .text(`Generated on ${new Date().toDateString()}`)
+        .text("This is a digitally generated prescription");
 
+      doc.end(); // 🔥 REQUIRED — FINALIZES PDF STREAM
 
     } catch (error) {
       console.error("PRESCRIPTION PDF ERROR:", error);
@@ -306,9 +296,6 @@ router.get(
   }
 );
 
-
-
-
-
 export default router;
+
 

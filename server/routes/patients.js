@@ -62,7 +62,7 @@ router.get(
       const doctorId = req.doctor.doc_id;
       const { appointmentId } = req.params;
 
-      // 1️⃣ Fetch prescription
+      // 1️Fetch prescription
       const prescriptionRes = await pool.query(
         `SELECT p.prescription_id,
                 p.appointment_id,
@@ -84,7 +84,7 @@ router.get(
 
       const prescription = prescriptionRes.rows[0];
 
-      // 2️⃣ Fetch medications for this prescription
+      // 2️Fetch medications for this prescription
       const medsRes = await pool.query(
         `SELECT m.medicine_name,
                 pm.dosage,

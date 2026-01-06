@@ -6,7 +6,8 @@ import appointmentRoutes from "./routes/appointments.js";
 import diagnosisRoutes from "./routes/diagnosis.js";
 import documentRoutes from "./routes/documents.js";
 import noteRoutes from "./routes/notes.js";
-import prescriptionRoutes from "./routes/prescriptions.js"
+import prescriptionRoutes from "./routes/prescriptions.js";
+import appointmentsFull from "./routes/appointmentsFull.js";
 
 
 const app = express();
@@ -23,7 +24,7 @@ app.use("/diagnoses", diagnosisRoutes);
 app.use("/documents",documentRoutes)
 app.use("/notes", noteRoutes);
 app.use("/prescriptions", prescriptionRoutes);
-
+app.use("/appointments/full", appointmentsFull);
 
 // Test route
 app.get("/", (req, res) => {
