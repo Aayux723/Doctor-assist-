@@ -5,7 +5,7 @@ import PDFDocument from "pdfkit";
 
 const router = express.Router();
 
-
+/* ===================== CREATE PRESCRIPTION ===================== */
 router.post("/", authMiddleware, async (req, res) => {
   const client = await pool.connect();
 
@@ -19,7 +19,6 @@ router.post("/", authMiddleware, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Verify appointment ownership
     const apptRes = await client.query(
       `SELECT patient_id, doctor_id
        FROM appointments
@@ -27,17 +26,12 @@ router.post("/", authMiddleware, async (req, res) => {
       [appointment_id]
     );
 
-    if (apptRes.rows.length === 0) {
-      throw new Error("Invalid appointment");
-    }
-
-    if (apptRes.rows[0].doctor_id !== doctorId) {
+    if (apptRes.rows.length === 0) throw new Error("Invalid appointment");
+    if (apptRes.rows[0].doctor_id !== doctorId)
       throw new Error("Unauthorized appointment access");
-    }
 
     const patientId = apptRes.rows[0].patient_id;
 
-    // Diagnosis (reuse or create)
     const diagRes = await client.query(
       `SELECT diagnosis_id
        FROM diagnoses
@@ -60,7 +54,6 @@ router.post("/", authMiddleware, async (req, res) => {
       diagnosisId = newDiag.rows[0].diagnosis_id;
     }
 
-    // Prescription
     const prescriptionRes = await client.query(
       `INSERT INTO prescriptions
        (appointment_id, doctor_id, patient_id, diagnosis_id, instructions)
@@ -71,7 +64,6 @@ router.post("/", authMiddleware, async (req, res) => {
 
     const prescriptionId = prescriptionRes.rows[0].prescription_id;
 
-    // Medications
     for (const med of medications) {
       const medRes = await client.query(
         `SELECT medication_id
@@ -124,67 +116,7 @@ router.post("/", authMiddleware, async (req, res) => {
   }
 });
 
-
-
-router.get(
-  "/appointment/:appointmentId",
-  authMiddleware,
-  async (req, res) => {
-    try {
-      const doctorId = req.doctor.doc_id;
-      const { appointmentId } = req.params;
-
-      const prescriptionRes = await pool.query(
-        `SELECT p.prescription_id,
-                p.appointment_id,
-                p.instructions,
-                p.created_at,
-                d.diagnosis_text
-         FROM prescriptions p
-         JOIN diagnoses d ON p.diagnosis_id = d.diagnosis_id
-         WHERE p.appointment_id = $1
-           AND p.doctor_id = $2`,
-        [appointmentId, doctorId]
-      );
-
-      if (prescriptionRes.rows.length === 0) {
-        return res.status(404).json({
-          message: "Prescription not found for this appointment"
-        });
-      }
-
-      const prescription = prescriptionRes.rows[0];
-
-      const medsRes = await pool.query(
-        `SELECT m.medicine_name,
-                pm.dosage,
-                pm.frequency,
-                pm.duration
-         FROM prescription_medications pm
-         JOIN medications m
-           ON pm.medication_id = m.medication_id
-         WHERE pm.prescription_id = $1`,
-        [prescription.prescription_id]
-      );
-
-      res.json({
-        prescription_id: prescription.prescription_id,
-        appointment_id: prescription.appointment_id,
-        diagnosis: prescription.diagnosis_text,
-        instructions: prescription.instructions,
-        created_at: prescription.created_at,
-        medications: medsRes.rows
-      });
-
-    } catch (error) {
-      console.error("GET PRESCRIPTION ERROR:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  }
-);
-
-
-
+/* ===================== DOWNLOAD PDF ===================== */
 router.get(
   "/appointment/:appointmentId/pdf",
   authMiddleware,
@@ -215,6 +147,9 @@ router.get(
 
       const prescription = presRes.rows[0];
 
+      // ✅ Remove duplicate "Dr." safely
+      const doctorName = prescription.doctor_name.replace(/^Dr\.?\s*/i, "");
+
       const medsRes = await pool.query(
         `SELECT m.medicine_name,
                 pm.dosage,
@@ -236,58 +171,60 @@ router.get(
 
       doc.pipe(res);
 
+      /* ---------- TITLE ---------- */
       doc
-        .fontSize(18)
-        .text("Medical Prescription", { align: "center" })
-        .moveDown();
+        .fontSize(20)
+        .text("MEDICAL PRESCRIPTION", { align: "center" })
+        .moveDown(0.5);
 
+      doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
+
+      /* ---------- HEADER ---------- */
       doc
         .fontSize(12)
-        .text(`Doctor: Dr. ${prescription.doctor_name}`)
-        .text(`Patient: ${prescription.patient_name}`)
-        .text(`Date: ${new Date(prescription.created_at).toDateString()}`)
+        .text(`Doctor   : Dr. ${doctorName}`)
+        .text(`Patient  : ${prescription.patient_name}`)
+        .text(`Date     : ${new Date(prescription.created_at).toDateString()}`)
         .moveDown();
 
-      doc
-        .fontSize(14)
-        .text("Diagnosis:")
-        .fontSize(12)
-        .text(prescription.diagnosis_text)
-        .moveDown();
+      doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
 
-      doc.fontSize(14).text("Medications:").moveDown(0.5);
+      /* ---------- DIAGNOSIS ---------- */
+      doc.fontSize(14).text("Diagnosis", { underline: true }).moveDown(0.3);
+      doc.fontSize(12).text(`• ${prescription.diagnosis_text}`).moveDown();
+
+      /* ---------- MEDICATIONS ---------- */
+      doc.fontSize(14).text("Medications", { underline: true }).moveDown(0.5);
 
       medsRes.rows.forEach((med, index) => {
         doc
           .fontSize(12)
-          .text(
-            `${index + 1}. ${med.medicine_name} - ${med.dosage}, ${med.frequency}, ${med.duration}`
-          );
+          .text(`${index + 1}. ${med.medicine_name}`)
+          .text(`   Dosage    : ${med.dosage || "—"}`)
+          .text(`   Frequency : ${med.frequency || "—"}`)
+          .text(`   Duration  : ${med.duration || "—"}`)
+          .moveDown(0.3);
       });
 
-      doc.moveDown();
-
+      /* ---------- INSTRUCTIONS ---------- */
       if (prescription.instructions) {
-        doc
-          .fontSize(14)
-          .text("Instructions:")
-          .fontSize(12)
-          .text(prescription.instructions)
-          .moveDown();
+        doc.moveDown();
+        doc.fontSize(14).text("Instructions", { underline: true }).moveDown(0.3);
+        doc.fontSize(12).text(`• ${prescription.instructions}`);
       }
 
-      doc
-        .moveDown(2)
-        .fontSize(12)
-        .text("Prescribed by")
-        .moveDown(0.3)
-        .fontSize(13)
-        .text(`Dr. ${prescription.doctor_name}`)
-        .fontSize(11)
-        .text(`Generated on ${new Date().toDateString()}`)
-        .text("This is a digitally generated prescription");
+      /* ---------- FOOTER ---------- */
+      doc.moveDown(2);
+      doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
 
-      doc.end(); // 🔥 REQUIRED — FINALIZES PDF STREAM
+      doc
+        .fontSize(12)
+        .text(`Dr. ${doctorName}`)
+        .text("Digitally Generated Prescription")
+        .fontSize(10)
+        .text(`Generated on ${new Date().toDateString()}`);
+
+      doc.end();
 
     } catch (error) {
       console.error("PRESCRIPTION PDF ERROR:", error);
@@ -297,5 +234,3 @@ router.get(
 );
 
 export default router;
-
-

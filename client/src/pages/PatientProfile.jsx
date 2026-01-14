@@ -6,7 +6,6 @@ export default function PatientProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // Frontend-normalized shape
   const [profile, setProfile] = useState({
     patient: {},
     appointments: [],
@@ -23,9 +22,6 @@ export default function PatientProfile() {
       try {
         const res = await api.get(`/patients/${id}/profile`);
 
-        console.log("Patient profile API response:", res.data);
-
-        // Normalize backend → frontend
         setProfile({
           patient: res.data.patient || {},
           appointments: res.data.appointments || [],
@@ -44,6 +40,51 @@ export default function PatientProfile() {
     fetchProfile();
   }, [id]);
 
+  // ✅ PDF DOWNLOAD FUNCTION
+  const downloadPrescription = async (appointmentId) => {
+    try {
+      const res = await api.get(
+        `/prescriptions/appointment/${appointmentId}/pdf`,
+        { responseType: "blob" }
+      );
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `prescription_${appointmentId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Failed to download prescription");
+    }
+  };
+
+  const cancelAppointment = async (appointmentId) => {
+  if (!window.confirm("Cancel this appointment?")) return;
+
+  try {
+    await api.patch(`/appointments/${appointmentId}/cancel`);
+    
+    window.location.reload();
+  } catch (err) {
+    alert("Failed to cancel appointment");
+  }
+};
+
+  const completeAppointment = async (appointmentId) => {
+  if (!window.confirm("Mark this appointment as completed?")) return;
+
+  try {
+    await api.patch(`/appointments/${appointmentId}/complete`);
+    window.location.reload();
+  } catch (err) {
+    alert("Failed to complete appointment");
+  }
+};
+
+
   if (loading) {
     return <p style={{ padding: "20px" }}>Loading patient profile...</p>;
   }
@@ -54,13 +95,11 @@ export default function PatientProfile() {
 
   return (
     <div style={{ padding: "20px" }}>
-      {/* ================= PATIENT INFO ================= */}
       <h1>{profile.patient.name}</h1>
       <p>Age: {profile.patient.age ?? "N/A"}</p>
       <p>Gender: {profile.patient.gender ?? "N/A"}</p>
       <p>Symptoms: {profile.patient.symptoms ?? "N/A"}</p>
 
-      {/* ADD APPOINTMENT BUTTON */}
       <button
         onClick={() => navigate(`/appointments/new?patient=${id}`)}
         style={{ marginTop: "10px" }}
@@ -70,24 +109,53 @@ export default function PatientProfile() {
 
       <hr />
 
-      {/* ================= APPOINTMENTS ================= */}
-      <h2>Appointments</h2>
-      {profile.appointments.length === 0 ? (
-        <p>No appointments found.</p>
-      ) : (
-        <ul>
-          {profile.appointments.map((appt) => (
-            <li key={appt.appointment_id}>
-              {new Date(appt.appointment_date).toDateString()} at{" "}
-              {appt.appointment_time} — {appt.status}
-            </li>
-          ))}
-        </ul>
-      )}
+     <h2>Appointments</h2>
 
-      <hr />
+{profile.appointments.length === 0 ? (
+  <p>No appointments found.</p>
+) : (
+  <ul style={{ listStyle: "none", padding: 0 }}>
+    {profile.appointments.map((appt) => (
+      <li
+        key={appt.appointment_id}
+        style={{
+          border: "1px solid #ddd",
+          padding: "10px",
+          marginBottom: "10px"
+        }}
+      >
+        <strong>
+          {new Date(appt.appointment_date).toDateString()}
+        </strong>{" "}
+        at {appt.appointment_time}
+        <br />
+        Status: <strong>{appt.status}</strong>
 
-      {/* ================= DIAGNOSES ================= */}
+        {/* ACTION BUTTONS */}
+        {appt.status === "scheduled" && (
+          <div style={{ marginTop: "8px" }}>
+            <button
+              onClick={() => completeAppointment(appt.appointment_id)}
+              style={{ marginRight: "8px" }}
+            >
+              Complete
+            </button>
+
+            <button
+              onClick={() => cancelAppointment(appt.appointment_id)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </li>
+    ))}
+  </ul>
+)}
+
+<hr />
+
+
       <h2>Diagnoses</h2>
       {profile.diagnoses.length === 0 ? (
         <p>No diagnoses found.</p>
@@ -103,27 +171,22 @@ export default function PatientProfile() {
           >
             <strong>{diag.diagnosis_text}</strong>
 
-            {diag.medications?.length === 0 ? (
-              <p>No medications.</p>
-            ) : (
-              <ul>
-                {diag.medications.map((med) => (
-                  <li key={med.medication_id}>
-                    {med.medicine_name}
-                    {med.dosage && ` — ${med.dosage}`}
-                    {med.frequency && `, ${med.frequency}`}
-                    {med.duration && `, ${med.duration}`}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ul>
+              {diag.medications.map((med) => (
+                <li key={med.medication_id}>
+                  {med.medicine_name}
+                  {med.dosage && ` — ${med.dosage}`}
+                  {med.frequency && `, ${med.frequency}`}
+                  {med.duration && `, ${med.duration}`}
+                </li>
+              ))}
+            </ul>
           </div>
         ))
       )}
 
       <hr />
 
-      {/* ================= CLINICAL NOTES ================= */}
       <h2>Clinical Notes</h2>
       {profile.notes.length === 0 ? (
         <p>No clinical notes.</p>
@@ -140,7 +203,6 @@ export default function PatientProfile() {
 
       <hr />
 
-      {/* ================= DOCUMENTS ================= */}
       <h2>Documents</h2>
       {profile.documents.length === 0 ? (
         <p>No documents uploaded.</p>
@@ -156,7 +218,7 @@ export default function PatientProfile() {
 
       <hr />
 
-      {/* ================= PRESCRIPTIONS ================= */}
+      {/* ✅ PRESCRIPTIONS WITH PDF DOWNLOAD */}
       <h2>Prescriptions</h2>
       {profile.prescriptions.length === 0 ? (
         <p>No prescriptions found.</p>
@@ -172,20 +234,28 @@ export default function PatientProfile() {
           >
             <strong>Diagnosis:</strong> {pres.diagnosis_text}
             <br />
-            <strong>Instructions:</strong> {pres.instructions}
+            <strong>Instructions:</strong> {pres.instructions || "—"}
 
             <ul>
               {pres.medications.map((med, idx) => (
                 <li key={idx}>
-                  {med.medicine_name} — {med.dosage}, {med.frequency},{" "}
-                  {med.duration}
+                  {med.medicine_name}
+                  {med.dosage && ` — ${med.dosage}`}
+                  {med.frequency && `, ${med.frequency}`}
+                  {med.duration && `, ${med.duration}`}
                 </li>
               ))}
             </ul>
+
+            <button
+              onClick={() => downloadPrescription(pres.appointment_id)}
+              style={{ marginTop: "8px" }}
+            >
+              Download Prescription (PDF)
+            </button>
           </div>
         ))
       )}
     </div>
   );
 }
-
